@@ -1,40 +1,35 @@
 #include <iostream>
+#include <cuda_runtime.h>
 
 __global__ void partialSum(const float *input, float *output, int N)
 {
-    // Shared memory
-    extern __shared__ int sharedMemory[];
-
+    extern __shared__ float sharedMemory[]; // Changed to float
+    
     int tid = threadIdx.x;
-    int index = blockIdx.x * blockDim.x * 2 + tid;
-
-    if (index < n)
-    {
-        // Load input into shared memory and optimize the loading to do coalescing
-        sharedMemory[tid] = input[index] + input[index + blockDim.x];
-        __syncthreads(); // Ensure all threads have loaded their data into shared memory
-
-        // Perform inclusive scan in shared memory
-        for (int stride = 1; stride < blockDim.x; stride *= 2) // multiply by 2 each iteration because we are doubling the stride
-        // the stride is the distance between elements to be summed and we are doubling it each iteration because we are summing pairs of elements
-        // This loop performs the inclusive scan by summing elements in shared memory
-        {
-            int temp = 0;
-            if (tid >= stride) // Check if the thread index is greater than or equal to stride
-            {
-                temp = sharedMemory[tid - stride]; // Get the value from shared memory at the position of stride before this thread
-            }
-            __syncthreads();           // Ensure all threads have completed the previous step before proceeding
-            sharedMemory[tid] += temp; // Add the value from the previous stride to the current value in shared memory
-            __syncthreads();           // Ensure all threads have completed the addition before proceeding
+    int index = blockIdx.x * blockDim.x + tid; // Simplified indexing
+    
+    // Load input into shared memory with bounds checking
+    if (index < N) {
+        sharedMemory[tid] = input[index];
+    } else {
+        sharedMemory[tid] = 0.0f; // Initialize to zero if out of bounds
+    }
+    __syncthreads();
+    
+    // Perform inclusive scan (prefix sum)
+    for (int stride = 1; stride < blockDim.x; stride *= 2) {
+        float temp = 0.0f;
+        if (tid >= stride) {
+            temp = sharedMemory[tid - stride];
         }
-
-        // Write result to global memory
-        output[index] = sharedMemory[tid]; // Write the result back to global memory global memory is used for storing the final result
-        if (index + blockDim.x < N)        // Check if the next element is within bounds
-        {
-            output[index + blockDim.x] = sharedMemory[tid]; // Write the result for the next element
-        }
+        __syncthreads();
+        sharedMemory[tid] += temp;
+        __syncthreads();
+    }
+    
+    // Write result back to global memory
+    if (index < N) {
+        output[index] = sharedMemory[tid];
     }
 }
 
@@ -42,39 +37,36 @@ int main()
 {
     const int N = 16;
     const int blockSize = 8;
-
-    int h_input[N] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
-    int h_output[N];
-
-    int *d_input, *d_output;
-    size_t size = N * sizeof(int); // Size in bytes for N integers size_t is used for size in bytes size_t is an unsigned integer type that is used to represent the size of an object in bytes
-    // Allocate memory on the device
-
+    
+    // Changed to float arrays
+    float h_input[N] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    float h_output[N];
+    
+    float *d_input, *d_output;
+    size_t size = N * sizeof(float); // Changed to sizeof(float)
+    
     cudaMalloc(&d_input, size);
-    cudaMalloc(&d_output, size); // Allocate memory for the output on the device
-    // Copy input data from host to device
-
+    cudaMalloc(&d_output, size);
+    
     cudaMemcpy(d_input, h_input, size, cudaMemcpyHostToDevice);
-
-    partialSumKernel<<<N / blockSize, blockSize, blockSize * sizeof(int)>>>(d_input, d_output, N); // Launch the kernel with N / blockSize blocks and blockSize threads per block why we are N / blockSize blocks? because we are processing N elements and each block can process blockSize elements, so we need N / blockSize blocks to process all elements
-    // Copy output data from device to host
-
+    
+    // Launch kernel with proper shared memory size for floats
+    partialSum<<<(N + blockSize - 1) / blockSize, blockSize, blockSize * sizeof(float)>>>(d_input, d_output, N);
+    
     cudaMemcpy(h_output, d_output, size, cudaMemcpyDeviceToHost);
-
-    printf("Input: "); // Print the input array
-    for (int i = 0; i < N; i++)
-    {
-        printf("%d ", h_input[i]);
-    } // Print the input array
+    
+    printf("Input: ");
+    for (int i = 0; i < N; i++) {
+        printf("%.0f ", h_input[i]);
+    }
     printf("\nOutput: ");
-    for (int i = 0; i < N; i++)
-    {
-        printf("%d ", h_output[i]);
-    } // Print the output array
+    for (int i = 0; i < N; i++) {
+        printf("%.0f ", h_output[i]);
+    }
     printf("\n");
-
-    cudaFree(d_input); // Free device memory
-    cudaFree(d_output); // Free device memory
-
+    
+    cudaFree(d_input);
+    cudaFree(d_output);
+    
     return 0;
 }
