@@ -10,15 +10,18 @@ __global__ void prefixsum_kernel(float *A, float *C, int N)
     // Load input data into shared memory for faster access
     // Each thread loads two elements to maximize memory bandwidth utilization
     __shared__ float S_A[LOAD_SIZE]; // shared memory size is 32 floats, so we can load 64 floats in total shared between all threads
+    
     if (i < N)
     {
         S_A[threadId] = A[i];
     }
+
     if (i + blockDim.x < N)
     {
         S_A[threadId + blockDim.x] = A[i + blockDim.x];
     }
     __syncthreads();
+    // Ensure all threads have loaded their data before proceeding
 
     // Phase 1: Up-sweep (reduction phase) - Build binary tree of partial sums
     // Each iteration doubles the jump distance and reduces active threads by half
